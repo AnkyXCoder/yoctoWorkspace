@@ -1,0 +1,5 @@
+.venv/
+yocto-env.sh
+build/
+meta-*/
+poky/

@@ -47,6 +47,50 @@ This repository includes a script to install dependencies, packages and clone ne
     ./yoctoWorkspace/scripts/setup_yocto_workspace.sh
     ```
 
+- After successful setup, the directory structure should look like:
+
+    ```tree
+    yoctoWorkspace
+    ├── layers
+    │   ├── meta-openembedded
+    │   └── meta-raspberrypi
+    ├── poky
+    ├── README.md
+    ├── scripts
+    │   └── setup_yocto_workspace.sh
+    ├── tutorials
+    ├── yocto-env.sh
+    ```
+
+## Setup script
+
+The repository provides `scripts/setup_yocto_workspace.sh` to create a workspace and clone required layers.
+
+Usage:
+
+```bash
+./scripts/setup_yocto_workspace.sh [--release <release>] [--machine <machine>]
+```
+
+- **--release**: Yocto release to use (default: **scarthgap**)
+- **--machine**: Target machine (default: **raspberrypi**)
+
+Examples:
+
+- Default (Scarthgap, Raspberry Pi):
+
+    ```bash
+    ./scripts/setup_yocto_workspace.sh
+    ```
+
+- BeagleBone (will clone `meta-bbb` from https://github.com/jumpnow/meta-bbb):
+
+    ```bash
+    ./scripts/setup_yocto_workspace.sh --machine beaglebone
+    ```
+
+The script clones only the layers relevant to the selected `--machine` (plus common layers) and will use the branch matching `--release` when possible. If your machine isn't covered by a built-in BSP, add the BSP layer manually after setup.
+
 ## Tutorials
 
 - [How to Build Yocto](tutorials/00_Build_Yocto/00_Build_Yocto.md)

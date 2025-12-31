@@ -25,7 +25,7 @@ Yocto requires specific development tools and libraries.
 
 - Clone this repository.
 
-    ```shell
+    ```bash
     git clone git@github.com:AnkyXCoder/yoctoWorkspace.git
     ```
 
@@ -36,48 +36,72 @@ Yocto requires specific development tools and libraries.
     - Clones meta-raspberrypi
     - Clones meta-openembedded
 
-    ```shell
+    ```bash
     chmod +x ./yoctoWorkspace/scripts/setup_yocto_workspace.sh
     ./yoctoWorkspace/scripts/setup_yocto_workspace.sh
     ```
 
 ✔ This installs all dependencies required by the Yocto Project.
 
+- After successful setup, the directory structure should look like:
+
+    ```tree
+    yoctoWorkspace
+    ├── layers
+    │   ├── meta-openembedded
+    │   └── meta-raspberrypi
+    ├── poky
+    ├── README.md
+    ├── scripts
+    │   └── setup_yocto_workspace.sh
+    ├── tutorials
+    ├── yocto-env.sh
+    ```
+
 ### Step 2: Initialize the Yocto Build Environment
 
 - Initialize Environment:
 
-    ```shell
+    ```bash
     source ./scripts/yocto-env.sh
     ```
 
 - Initialize Build Environment:
 
-    ```shell
+    ```bash
     source poky/oe-init-build-env
     ```
 
 ### Step 3: Configure Build
 
-- Add BSP layer meta-raspberrypi to `conf/bblayers.conf`:
+- Add BSP layer `meta-raspberrypi` to `conf/bblayers.conf`:
 
-    ```shell
-    bitbake-layers add-layer ../meta-raspberrypi
+    ```bash
+    bitbake-layers add-layer ../layers/meta-raspberrypi
     ```
 
-- Append the following 3 lines to the end of `conf/local.conf`:
+- Append the following lines to the end of `conf/local.conf`:
 
     ```conf
-    MACHINE = "raspberrypi5"
+    MACHINE = "raspberrypi4"
     INIT_MANAGER = "systemd"
     LICENSE_FLAGS_ACCEPTED = "synaptics-killswitch"
+    # Enable the UART
+    ENABLE_UART = "1"
+    ```
+
+- For 64-bit Raspberry Pi 4 build, use:
+
+    ```conf
+    # For 64-bit Raspberry Pi 4 build
+    MACHINE = "raspberrypi4-64"
     ```
 
 ### Step 4: Build the First Image (core-image-base)
 
 - Start the build for Raspberry Pi 4:
 
-    ```shell
+    ```bash
     bitbake core-image-base
     ```
 
@@ -88,7 +112,7 @@ Yocto requires specific development tools and libraries.
 
 On success, images will be generated in:
 
-```shell
+```bash
 build/tmp/deploy/images/raspberrypi4/
 ```
 
@@ -96,11 +120,11 @@ build/tmp/deploy/images/raspberrypi4/
 
 Image files:
 
-```shell
-core-image-base-raspberrypi4.wic.bz2
+```bash
+core-image-base-raspberrypi4.rootfs.wic.bz2
 bcm2711-rpi-4-b.dtb
-Image
-modules-*.tgz
+zImage
+modules-raspberrypi4.tgz
 ```
 
 The `.wic.bz2` file is the bootable SD card image.
@@ -109,34 +133,52 @@ The `.wic.bz2` file is the bootable SD card image.
 
 1. Insert SD card and identify device
 
-```shell
-lsblk
-```
+    ```bash
+    lsblk
+    ```
 
-Example device: `/dev/sdb`
+2. Unmount micro SD Card
 
-⚠️ Be careful — wrong device will erase your system disk
+    ```bash
+    sudo umount /dev/sdX
+    ```
 
-2️. Decompress the image
+    Replace `/dev/sdX` with your SD card device (e.g., `/dev/sda`).
 
-```shell
-bunzip2 core-image-base-raspberrypi4-64.wic.bz2
-```
+3. Full Wipe (using dd)
 
-3️. Flash using `dd`
+   This overwrites everything, making data recovery very difficult (use with extreme caution!).
 
-```shell
-sudo dd if=core-image-base-raspberrypi4-64.wic \
-        of=/dev/sdX bs=4M status=progress conv=fsync
-```
+    ```bash
+    sudo dd if=/dev/zero of=/dev/sdX bs=4M status=progress
+    ```
 
-Replace `/dev/sdX` with your SD card device (e.g., `/dev/sdb`).
+    Replace `/dev/sdX` with your SD card device (e.g., `/dev/sda`).
+
+    ⚠️ Be careful — wrong device will erase your system disk.
+
+4. Decompress the image and Flash the image using `dd`
+
+    ```bash
+    bzcat build/tmp/deploy/images/raspberrypi4/core-image-base-raspberrypi4.rootfs.wic.bz2 | sudo dd of=/dev/sdX
+    ```
+
+    Replace `/dev/sdX` with your SD card device (e.g., `/dev/sda`).
+
+    Example output:
+
+    ```bash
+    672562+0 records in
+    672562+0 records out
+    344351744 bytes (344 MB, 328 MiB) copied, 65.3482 s, 5.3 MB/s
+    ```
 
 ### Step 7: Serial Console Connection (Debug)
 
 - Raspberry Pi 4 UART Pins
 
 | Signal | GPIO | Pin |
+| ----- | ----- | ----- |
 | TX | GPIO14 | Pin 8 |
 | RX | GPIO15 | Pin 10 |
 | GND | - | Pin 6 |
@@ -146,19 +188,24 @@ Replace `/dev/sdX` with your SD card device (e.g., `/dev/sdb`).
 - USB-to-TTL Connections
 
 | USB-TTL | Raspberry Pi |
+| ----- | ----- |
 | RX | TX (GPIO14) |
 | TX | RX (GPIO15) |
 | GND | GND |
 
+Refer to https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#gpio
+
+![alt text](raspberrypi-4b-gpio-expansion-header.png)
+
 - Open Serial Terminal
 
-    ```shell
+    ```bash
     sudo minicom -D /dev/ttyUSB0 -b 115200
     ```
 
     or
 
-    ```shell
+    ```bash
     screen /dev/ttyUSB0 115200
     ```
 
@@ -169,18 +216,55 @@ Replace `/dev/sdX` with your SD card device (e.g., `/dev/sdb`).
 - Power ON the board
 - You should see U-Boot → Kernel → Login prompt on serial console.
 
+Example output:
+
+```bash
+Poky (Yocto Project Reference Distro) 5.0.14 raspberrypi4 tty0.163931] audit: type=1334 audit(1748544602.429:16): prog-id=19
+raspberrypi4 login:
+```
+
 ### Step 9: Login to the System
 
 Default credentials:
 
-```shell
+```bash
 username: root
 password: (empty)
 ```
 
-Verify system:
+Verify OS:
 
-```shell
-uname -a
-cat /etc/os-release
+```bash
+root@raspberrypi4:~# uname -a
 ```
+
+Example output:
+
+```bash
+Linux raspberrypi4 6.6.63-v7l
+```
+
+Verify OS details:
+
+```bash
+root@raspberrypi4:~# cat /etc/os-release
+```
+
+Example output:
+
+```bash
+ID=poky
+NAME="Poky (Yocto Project Reference Distro)"
+VERSION="5.0.14 (scarthgap)"
+VERSION_ID=5.0.14
+VERSION_CODENAME="scarthgap"
+PRETTY_NAME="Poky (Yocto Project Reference Distro) 5.0.14 (scarthgap)"
+CPE_NAME="cpe:/o:openembedded:poky:5.0.14"
+```
+
+## ✅ What You Have Achieved
+
+✔ Built your first Yocto image
+✔ Flashed Raspberry Pi 4 SD card
+✔ Connected serial debug console
+✔ Booted custom Embedded Linux

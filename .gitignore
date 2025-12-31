@@ -3,3 +3,4 @@ yocto-env.sh
 build/
 meta-*/
 poky/
+*.code-workspace

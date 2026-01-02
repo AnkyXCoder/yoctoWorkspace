@@ -93,9 +93,11 @@ The script clones only the layers relevant to the selected `--machine` (plus com
 
 ## Tutorials
 
-- [How to Build Yocto](tutorials/00_Build_Yocto/00_Build_Yocto.md)
+1. [How to Build Yocto](tutorials/00_Build_Yocto/00_Build_Yocto.md)
   - Step-by-step guide to build a Yocto image for Raspberry Pi.
 
-- [How to Create a New Layer and a new Recipe](tutorials/01_Hello_World_Service/01_Hello_World_Service.md)
+2. [How to Create a New Layer and a new Recipe](tutorials/01_Hello_World_Service/01_Hello_World_Service.md)
   - Step-by-step guide to Create a New Custom Layer and add a new Recipe.
 
+3. [How to Create a **systemd** service](tutorials/02_systemd_Demo_Service/02_systemd_Demo_Service.md)
+  - Step-by-step guide to Create a **systemd** service.

@@ -1,1 +1,1 @@
-IMAGE_INSTALL:append = " hello-service"
+IMAGE_INSTALL:append = " hello-service demo-service"

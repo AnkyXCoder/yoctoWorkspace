@@ -1,0 +1,14 @@
+{
+    "recommendations": [
+        "yocto-project.yocto-bitbake",
+        "ms-python.python",
+        "ms-python.vscode-python-envs",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-python.autopep8",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "twxs.cmake",
+        "ms-vscode.cmake-tools",
+        "medo64.render-crlf",
+        "mads-hartmann.bash-ide-vscode"
+    ]
+}

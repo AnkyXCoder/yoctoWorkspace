@@ -1,6 +1,7 @@
 # Adding a **systemd** Service in Yocto
 
 In this section, we will:
+
 - Understand **systemd** in embedded Linux
 - Create, package, and enable a **systemd** service using a BitBake recipe
 - Enable and debug a service on target
@@ -51,7 +52,6 @@ Make sure it is executable:
 ```bash
 chmod +x demo.sh
 ```
-
 
 This script:
 
@@ -191,7 +191,6 @@ After build completion, flash the image to SD card as described earlier.
     ```
 
 ### Step 9: Manual Testing
-
 
 - Stop service:
 

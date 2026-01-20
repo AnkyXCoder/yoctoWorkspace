@@ -12,7 +12,7 @@ A structured, beginner-to-advanced learning repository for Yocto Project.
 
 THE YOCTO PROJECT. IT'S NOT AN EMBEDDED LINUX DISTRIBUTION, IT CREATES A CUSTOM ONE FOR YOU.
 
-https://www.yoctoproject.org/
+<https://www.yoctoproject.org/>
 
 ### Why to use Yocto?
 
@@ -83,7 +83,7 @@ Examples:
     ./scripts/setup_yocto_workspace.sh
     ```
 
-- BeagleBone (will clone `meta-bbb` from https://github.com/jumpnow/meta-bbb):
+- BeagleBone (will clone `meta-bbb` from <https://github.com/jumpnow/meta-bbb>):
 
     ```bash
     ./scripts/setup_yocto_workspace.sh --machine beaglebone
@@ -94,10 +94,13 @@ The script clones only the layers relevant to the selected `--machine` (plus com
 ## Tutorials
 
 1. [How to Build Yocto](tutorials/00_Build_Yocto/00_Build_Yocto.md)
-  - Step-by-step guide to build a Yocto image for Raspberry Pi.
+
+   - Step-by-step guide to build a Yocto image for Raspberry Pi.
 
 2. [How to Create a New Layer and a new Recipe](tutorials/01_Hello_World_Service/01_Hello_World_Service.md)
-  - Step-by-step guide to Create a New Custom Layer and add a new Recipe.
+
+   - Step-by-step guide to Create a New Custom Layer and add a new Recipe.
 
 3. [How to Create a **systemd** service](tutorials/02_systemd_Demo_Service/02_systemd_Demo_Service.md)
-  - Step-by-step guide to Create a **systemd** service.
+
+   - Step-by-step guide to Create a **systemd** service.

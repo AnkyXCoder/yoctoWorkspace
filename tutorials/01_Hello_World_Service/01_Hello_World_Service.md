@@ -39,7 +39,7 @@ In this section, we will:
 - List added Layers
 
     ```bash
-    bitbake-layers show-layer
+    bitbake-layers show-layers
     ```
 
     For example,

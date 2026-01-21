@@ -104,3 +104,7 @@ The script clones only the layers relevant to the selected `--machine` (plus com
 3. [How to Create a **systemd** service](tutorials/02_systemd_Demo_Service/02_systemd_Demo_Service.md)
 
    - Step-by-step guide to Create a **systemd** service.
+
+4. [How to enable Wi-Fi and SSH](tutorials/03_Enable_WiFi_SSH/03_Enable_WiFi_SSH.md)
+
+   - Step-by-step guide to Enable Wi-Fi and SSH.

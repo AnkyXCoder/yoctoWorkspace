@@ -1,6 +1,7 @@
 .venv/
 yocto-env.sh
 build/
+images/
 meta-*/
 poky/
 *.code-workspace

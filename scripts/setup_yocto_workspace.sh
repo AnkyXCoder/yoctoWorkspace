@@ -18,7 +18,7 @@ META_RUST_BRANCH="${YOCTO_RELEASE_DEFAULT}"
 META_BBB_BRANCH="${YOCTO_RELEASE_DEFAULT}"
 
 # Defaults for machine
-MACHINE_DEFAULT="raspberrypi"
+MACHINE_DEFAULT="raspberrypi4-64"
 MACHINE="${MACHINE_DEFAULT}"
 
 ############################################

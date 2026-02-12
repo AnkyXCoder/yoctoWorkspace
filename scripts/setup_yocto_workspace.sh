@@ -113,7 +113,7 @@ header "Configuring Package List"
 COMMON_PACKAGES=(
 	gawk wget git diffstat unzip texinfo gcc build-essential
 	chrpath socat cpio python3 python3-pexpect
-	xz-utils debianutils iputils-ping shfmt
+	xz-utils debianutils iputils-ping shfmt bmap-tools
 	file locales zstd lz4 gparted minicom
 )
 

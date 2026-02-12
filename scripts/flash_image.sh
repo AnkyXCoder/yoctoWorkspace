@@ -8,11 +8,28 @@ DEVICE=""
 LOCAL_DIR=""
 ASSUME_YES=0
 FORCE_LOCAL_FILE=""
+# Download type: 'bz2', 'bmap', or empty for both/default
+DOWNLOAD_TYPE=""
+# Flash method preference: 'bmap' (default) or 'dd'
+FLASH_METHOD="bmap"
 
 # directories and timestamps
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WORKSPACE_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 IMAGES_DIR="$WORKSPACE_DIR/images"
+DRY_RUN=0
+ORIG_ARGS=("$@")
+
+# support long form --dry-run by removing it before getopts runs
+NEW_ARGS=()
+for a in "$@"; do
+	if [[ "$a" == "--dry-run" ]]; then
+		DRY_RUN=1
+	else
+		NEW_ARGS+=("$a")
+	fi
+done
+set -- "${NEW_ARGS[@]}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TARGET_DIR=""
 
@@ -51,15 +68,21 @@ Options:
 	-F <file>      Use a local, pre-downloaded image file (will be copied into images/<timestamp>/)
 	-d <device>    Target block device to flash (e.g. /dev/sdb). If omitted, the script will prompt for it
 	-l <local_dir> Local directory root to store images (default: <workspace>/images)
+	-t <type>      Download type: 'bz2' (bz2+related), 'bmap' (bmap+related). If omitted, downloads both sets.
+	-m <method>    Flash method preference: 'bmap' (default) or 'dd'
 	-y             Skip interactive confirmation prompts (use with caution)
 	-h             Show this help
 
 Behavior notes:
 	- Downloaded or copied images are placed in: <workspace>/images/<timestamp>/
-	- The script will attempt to detect YOCTO_MACHINE from $(yocto-env.sh) and build
+	- The script will attempt to detect YOCTO_MACHINE from \$(yocto-env.sh) and build
 		the standard path from the remote build dir: <build>/tmp/deploy/images/<MACHINE>/core-image-base-<MACHINE>.rootfs.wic.bz2
 	- If you provide -H and -p, the remote path is constructed from the supplied
 		build directory.
+	- If you provide -H and -p, the remote path is constructed from the supplied
+		build directory. The script will attempt to download the primary image
+		(e.g. .bz2) and any companion mapping files (.bmap or .bzmap) when
+		available to enable faster flashing with bmaptool.
 
 Examples:
 	# construct path from remote build directory and flash (interactive device prompt allowed)
@@ -74,10 +97,19 @@ Examples:
 	# download and keep images in custom storage dir (remote build dir provided)
 	./scripts/$(basename "$0") -H user@host -p /home/user/yoctoWorkspace/build -l /tmp/my_images
 
+	# Construct path from remote build dir and download image + mapping files (default)
+	./scripts/$(basename "$0") -H user@host -p /home/user/yoctoWorkspace/build -d /dev/sdX
+
+	# Only download .bmap (and companion files) and flash using bmap where possible
+	./scripts/$(basename "$0") -H user@host -p /home/user/yoctoWorkspace/build -t bmap -m bmap -d /dev/sdX
+
+	# Only download .bz2 images and related artifacts and force dd flashing
+	./scripts/$(basename "$0") -H user@host -p /home/user/yoctoWorkspace/build -t bz2 -m dd -d /dev/sdX
+
 EOF
 }
 
-while getopts ":r:H:p:d:l:F:yh" opt; do
+while getopts ":r:H:p:d:l:F:nt:m:yh" opt; do
 	case ${opt} in
 	r) REMOTE="$OPTARG" ;;
 	H) REMOTE_HOST="$OPTARG" ;;
@@ -85,6 +117,9 @@ while getopts ":r:H:p:d:l:F:yh" opt; do
 	d) DEVICE="$OPTARG" ;;
 	l) LOCAL_DIR="$OPTARG" ;;
 	F) FORCE_LOCAL_FILE="$OPTARG" ;;
+	t) DOWNLOAD_TYPE="$OPTARG" ;;
+	n) DRY_RUN=1 ;;
+	m) FLASH_METHOD="$OPTARG" ;;
 	y) ASSUME_YES=1 ;;
 	h)
 		print_help
@@ -150,26 +185,97 @@ else
 		fi
 	fi
 
-	# Try rsync first (copy symlink target with -L), fall back to scp on failure.
+	# Build list of remote files to fetch: primary file plus companion .bmap if present.
+	REMOTE_FILES=()
+	# If the REMOTE was a specific file, include it first
+	if [[ "$RESOLVED_REMOTE" == *:* ]]; then
+		REMOTE_FILES+=("$RESOLVED_REMOTE")
+	fi
+
+	# If REMOTE contains host:path, attempt to probe companion files on remote host
+	if [[ "$RESOLVED_REMOTE" == *:* ]]; then
+		REMOTE_HOST_ONLY="${RESOLVED_REMOTE%%:*}"
+		REMOTE_PATH_ONLY="${RESOLVED_REMOTE#*:}"
+		REMOTE_DIR_ONLY=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST_ONLY" "dirname -- '$REMOTE_PATH_ONLY'" 2>/dev/null || true)
+		if [[ -z "$REMOTE_DIR_ONLY" ]]; then
+			REMOTE_DIR_ONLY=$(dirname "$REMOTE_PATH_ONLY")
+		fi
+
+		# helper: expand remote glob and add existing files to REMOTE_FILES
+		remote_add_pattern() {
+			local pattern="$1"
+			local list
+			list=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST_ONLY" "ls -1 ${pattern} 2>/dev/null || true" 2>/dev/null || true)
+			if [[ -n "$list" ]]; then
+				while IFS= read -r f; do
+					# skip empty lines
+					[[ -z "$f" ]] && continue
+					REMOTE_FILES+=("${REMOTE_HOST_ONLY}:${f}")
+				done <<<"$list"
+			fi
+		}
+
+		# build candidate patterns based on requested download type
+		case "$DOWNLOAD_TYPE" in
+		bz2)
+			PATTERNS=("${REMOTE_DIR_ONLY}/*.wic.bz2" "${REMOTE_DIR_ONLY}/*.wic" "${REMOTE_DIR_ONLY}/core-image-base-${MACHINE}.rootfs*.ext3" "${REMOTE_DIR_ONLY}/core-image-base-${MACHINE}.rootfs*.tar.bz2" "${REMOTE_DIR_ONLY}/core-image-base*manifest" "${REMOTE_DIR_ONLY}/core-image-base.env")
+			;;
+		bmap)
+			PATTERNS=("${REMOTE_DIR_ONLY}/*.wic.bmap" "${REMOTE_DIR_ONLY}/*.wic" "${REMOTE_DIR_ONLY}/*.wic.bz2" "${REMOTE_DIR_ONLY}/core-image-base*manifest" "${REMOTE_DIR_ONLY}/core-image-base.env")
+			;;
+		*)
+			PATTERNS=("${REMOTE_DIR_ONLY}/*.wic" "${REMOTE_DIR_ONLY}/*.wic.bz2" "${REMOTE_DIR_ONLY}/*.wic.bmap" "${REMOTE_DIR_ONLY}/*.wic.bzmap" "${REMOTE_DIR_ONLY}/core-image-base-${MACHINE}.rootfs*.ext3" "${REMOTE_DIR_ONLY}/core-image-base-${MACHINE}.rootfs*.tar.bz2" "${REMOTE_DIR_ONLY}/core-image-base*manifest" "${REMOTE_DIR_ONLY}/core-image-base.env")
+			;;
+		esac
+
+		for pat in "${PATTERNS[@]}"; do
+			remote_add_pattern "$pat"
+		done
+
+	fi
+
 	DOWNLOAD_OK=0
-	if command -v rsync >/dev/null 2>&1; then
-		echo "Attempting rsync (copying symlink target)..."
-		RSYNC_CMD=(rsync -avPL --partial "$RESOLVED_REMOTE" "$TARGET_DIR/")
-		echo "Running: ${RSYNC_CMD[*]}"
-		if "${RSYNC_CMD[@]}"; then
-			DOWNLOAD_OK=1
+	# Try rsync for all discovered remote files at once
+	if [[ $DRY_RUN -eq 1 ]]; then
+		echo "Dry-run: remote files that would be downloaded:"
+		if [[ ${#REMOTE_FILES[@]} -eq 0 ]]; then
+			echo "  (no files discovered)"
 		else
-			echo "rsync failed, will try scp fallback" >&2
+			for f in "${REMOTE_FILES[@]}"; do
+				echo "  $f"
+			done
+		fi
+		exit 0
+	fi
+
+	if command -v rsync >/dev/null 2>&1; then
+		if [[ ${#REMOTE_FILES[@]} -eq 0 ]]; then
+			echo "No remote files discovered to fetch." >&2
+		else
+			echo "Attempting rsync for:"
+			for f in "${REMOTE_FILES[@]}"; do echo "  $f"; done
+			RSYNC_CMD=(rsync -avPL --partial "${REMOTE_FILES[@]}" "$TARGET_DIR/")
+			echo "Running: ${RSYNC_CMD[*]}"
+			if "${RSYNC_CMD[@]}"; then
+				DOWNLOAD_OK=1
+			else
+				echo "rsync failed, will try scp fallback" >&2
+			fi
 		fi
 	fi
+
 	if [[ $DOWNLOAD_OK -eq 0 ]]; then
-		echo "Attempting scp..."
-		SCP_CMD=(scp "$RESOLVED_REMOTE" "$TARGET_DIR/")
-		echo "Running: ${SCP_CMD[*]}"
-		if "${SCP_CMD[@]}"; then
+		echo "Attempting scp for each file..."
+		SCP_FAILED=0
+		for src in "${REMOTE_FILES[@]}"; do
+			echo "scp $src -> $TARGET_DIR/"
+			if ! scp "$src" "$TARGET_DIR/"; then
+				SCP_FAILED=1
+				echo "scp failed for $src" >&2
+			fi
+		done
+		if [[ $SCP_FAILED -eq 0 ]]; then
 			DOWNLOAD_OK=1
-		else
-			echo "scp failed to download $RESOLVED_REMOTE" >&2
 		fi
 	fi
 
@@ -179,16 +285,50 @@ else
 		exit 4
 	fi
 
-	# Determine the actual downloaded file. Prefer the expected basename, otherwise pick the newest file in the target dir.
-	if [[ ! -f "$LOCAL_PATH" ]]; then
-		# pick newest regular file in TARGET_DIR
-		NEWEST=$(ls -t "$TARGET_DIR"/* 2>/dev/null | head -n1 || true)
-		if [[ -n "$NEWEST" && -f "$NEWEST" ]]; then
-			LOCAL_PATH="$NEWEST"
-			echo "Warning: expected filename not found; using $LOCAL_PATH"
+	# Print files downloaded into target dir
+	echo
+	echo "Downloaded files:"
+	ls -1 "$TARGET_DIR" || true
+
+	# Determine available WIC-related files (prefer to flash .wic with .bmap when possible)
+	WIC_FILE=$(ls -1 "$TARGET_DIR"/*.wic 2>/dev/null | head -n1 || true)
+	WIC_BZ2_FILE=$(ls -1 "$TARGET_DIR"/*.wic.bz2 2>/dev/null | head -n1 || true)
+	WIC_BMAP_FILE=$(ls -1 "$TARGET_DIR"/*.wic.bmap 2>/dev/null | head -n1 || true)
+
+	# If user provided a specific path earlier, prefer that basename when it exists
+	if [[ -n "${RESOLVED_REMOTE:-}" && "${RESOLVED_REMOTE}" == *:* ]]; then
+		EXPECTED_BASENAME=$(basename -- "$RESOLVED_REMOTE")
+		if [[ -f "$TARGET_DIR/$EXPECTED_BASENAME" ]]; then
+			LOCAL_PATH="$TARGET_DIR/$EXPECTED_BASENAME"
+		fi
+	fi
+
+	# Select preferred image according to availability and requested download type
+	if [[ -n "$WIC_BMAP_FILE" && "$FLASH_METHOD" != "dd" ]]; then
+		# prefer uncompressed .wic when bmap present
+		if [[ -n "$WIC_FILE" ]]; then
+			LOCAL_PATH="$WIC_FILE"
+		elif [[ -n "$WIC_BZ2_FILE" ]]; then
+			LOCAL_PATH="$WIC_BZ2_FILE"
+		fi
+	fi
+
+	if [[ -z "${LOCAL_PATH:-}" ]]; then
+		# fallback selection based on presence
+		if [[ -n "$WIC_BZ2_FILE" ]]; then
+			LOCAL_PATH="$WIC_BZ2_FILE"
+		elif [[ -n "$WIC_FILE" ]]; then
+			LOCAL_PATH="$WIC_FILE"
 		else
-			echo "Error: download failed, no files found in $TARGET_DIR" >&2
-			exit 4
+			# try to pick a likely image file from TARGET_DIR (e.g. rootfs images)
+			NEWEST=$(ls -t "$TARGET_DIR"/* 2>/dev/null | grep -E "(\.wic(\.bz2)?|\.img(\.bz2)?|rootfs.*\.ext3|rootfs.*\.tar\.bz2)" | head -n1 || true)
+			if [[ -n "$NEWEST" && -f "$NEWEST" ]]; then
+				LOCAL_PATH="$NEWEST"
+				echo "Selected image for flashing: $LOCAL_PATH"
+			else
+				echo "Error: no suitable image found in $TARGET_DIR" >&2
+				exit 4
+			fi
 		fi
 	fi
 
@@ -239,21 +379,138 @@ if [[ $ASSUME_YES -ne 1 ]]; then
 	fi
 fi
 
-# Perform the flash. Support .bz2 compressed images (common for Yocto .wic.bz2)
-if [[ "$LOCAL_PATH" == *.bz2 ]]; then
-	echo "Flashing compressed .bz2 image to $DEVICE"
+# Determine image type and flash accordingly. Support:
+# - bmap (use bmaptool when available)
+# - compressed .bz2 images (use bmaptool if .bmap present, otherwise bzcat|dd)
+# - raw images (dd)
+
+flash_with_dd() {
+	local src="$1"
 	if command -v pv >/dev/null 2>&1; then
-		SIZE=$(stat -c%s "$LOCAL_PATH" || echo 0)
-		pv -s "$SIZE" "$LOCAL_PATH" | bzcat | sudo dd of="$DEVICE" bs=4M status=progress conv=fsync
+		pv "$src" | sudo dd of="$DEVICE" bs=4M status=progress conv=fsync
 	else
-		bzcat "$LOCAL_PATH" | sudo dd of="$DEVICE" bs=4M status=progress conv=fsync
+		sudo dd if="$src" of="$DEVICE" bs=4M status=progress conv=fsync
 	fi
-else
-	echo "Flashing raw image to $DEVICE"
+}
+
+flash_bz2_with_dd() {
+	local src="$1"
 	if command -v pv >/dev/null 2>&1; then
-		pv "$LOCAL_PATH" | sudo dd of="$DEVICE" bs=4M status=progress conv=fsync
+		SIZE=$(stat -c%s "$src" || echo 0)
+		pv -s "$SIZE" "$src" | bzcat | sudo dd of="$DEVICE" bs=4M status=progress conv=fsync
 	else
-		sudo dd if="$LOCAL_PATH" of="$DEVICE" bs=4M status=progress conv=fsync
+		bzcat "$src" | sudo dd of="$DEVICE" bs=4M status=progress conv=fsync
+	fi
+}
+
+# helper: try to find a companion .bmap file for a given image path
+find_bmap_for() {
+	local img="$1"
+	local base="${img%.*}"
+	# check for .bmap and .bzmap siblings
+	if [[ -f "${base}.bmap" ]]; then
+		echo "${base}.bmap"
+		return 0
+	fi
+	if [[ -f "${base}.bzmap" ]]; then
+		echo "${base}.bzmap"
+		return 0
+	fi
+	# if image ends with .bz2 try stripping .bz2 first and check again
+	if [[ "$img" == *.bz2 ]]; then
+		local stripped="${img%.bz2}"
+		if [[ -f "${stripped}.bmap" ]]; then
+			echo "${stripped}.bmap"
+			return 0
+		fi
+		if [[ -f "${stripped}.bzmap" ]]; then
+			echo "${stripped}.bzmap"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+echo "Determining flashing method for: $LOCAL_PATH"
+
+# If user provided a .bmap file directly
+if [[ "$LOCAL_PATH" == *.bmap ]]; then
+	BMAP_FILE="$LOCAL_PATH"
+	# try to find image file candidates
+	CANDIDATES=("${LOCAL_PATH%.bmap}.wic" "${LOCAL_PATH%.bmap}.wic.bz2" "${LOCAL_PATH%.bmap}.img" "${LOCAL_PATH%.bmap}.img.bz2" "${LOCAL_PATH%.bmap}.bz2")
+	IMAGE_FILE=""
+	for c in "${CANDIDATES[@]}"; do
+		if [[ -f "$c" ]]; then
+			IMAGE_FILE="$c"
+			break
+		fi
+	done
+	if [[ -z "$IMAGE_FILE" ]]; then
+		echo "Error: could not find image file for bmap: $BMAP_FILE" >&2
+		exit 5
+	fi
+	echo "Using bmap: $BMAP_FILE -> image: $IMAGE_FILE"
+	if [[ "$FLASH_METHOD" == "dd" ]]; then
+		echo "Flashing with dd (forced by -m dd)"
+		if [[ "$IMAGE_FILE" == *.bz2 ]]; then
+			flash_bz2_with_dd "$IMAGE_FILE"
+		else
+			flash_with_dd "$IMAGE_FILE"
+		fi
+	elif command -v bmaptool >/dev/null 2>&1; then
+		echo "Writing with bmaptool copy $IMAGE_FILE $DEVICE --bmap $BMAP_FILE"
+		sudo bmaptool copy "$IMAGE_FILE" "$DEVICE" --bmap "$BMAP_FILE"
+	else
+		echo "Warning: bmaptool not found; falling back to dd on the image file (may be slower)" >&2
+		if [[ "$IMAGE_FILE" == *.bz2 ]]; then
+			flash_bz2_with_dd "$IMAGE_FILE"
+		else
+			flash_with_dd "$IMAGE_FILE"
+		fi
+	fi
+
+else
+	# Not a .bmap path. Check for companion .bmap for this image
+	POSSIBLE_BMAP=$(find_bmap_for "$LOCAL_PATH" || true)
+	if [[ -n "$POSSIBLE_BMAP" && -f "$POSSIBLE_BMAP" ]]; then
+		echo "Found companion bmap: $POSSIBLE_BMAP"
+		if [[ "$FLASH_METHOD" == "dd" ]]; then
+			echo "Flashing with dd (forced by -m dd)"
+			if [[ "$LOCAL_PATH" == *.bz2 ]]; then
+				flash_bz2_with_dd "$LOCAL_PATH"
+			else
+				flash_with_dd "$LOCAL_PATH"
+			fi
+		elif command -v bmaptool >/dev/null 2>&1; then
+			echo "Writing with bmaptool copy $LOCAL_PATH $DEVICE --bmap $POSSIBLE_BMAP"
+			sudo bmaptool copy "$LOCAL_PATH" "$DEVICE" --bmap "$POSSIBLE_BMAP"
+		else
+			echo "Warning: bmaptool not found; falling back to dd on the image file (may be slower)" >&2
+			if [[ "$LOCAL_PATH" == *.bz2 ]]; then
+				flash_bz2_with_dd "$LOCAL_PATH"
+			else
+				flash_with_dd "$LOCAL_PATH"
+			fi
+		fi
+	else
+		# No bmap available; handle compressed and raw images
+		if [[ "$FLASH_METHOD" == "dd" ]]; then
+			echo "Flashing with dd (forced by -m dd)"
+			if [[ "$LOCAL_PATH" == *.bz2 ]]; then
+				flash_bz2_with_dd "$LOCAL_PATH"
+			else
+				flash_with_dd "$LOCAL_PATH"
+			fi
+		else
+			# No bmap available; handle compressed and raw images
+			if [[ "$LOCAL_PATH" == *.bz2 ]]; then
+				echo "No bmap found; flashing compressed .bz2 image to $DEVICE"
+				flash_bz2_with_dd "$LOCAL_PATH"
+			else
+				echo "Flashing raw image to $DEVICE"
+				flash_with_dd "$LOCAL_PATH"
+			fi
+		fi
 	fi
 fi
 
